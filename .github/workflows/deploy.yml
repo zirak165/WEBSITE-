@@ -1,0 +1,89 @@
+name: Deploy Web to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Extract ZIP
+        run: |
+          # پیدا کردن هر فایل زیپی که در مخزن باشد
+          ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
+          if [ -n "$ZIP_FILE" ]; then
+            echo "در حال باز کردن فایل: $ZIP_FILE"
+            unzip -q "$ZIP_FILE" -d extracted_project
+          else
+            echo "هیچ فایل zip پیدا نشد. لطفا زیپ را آپلود کنید."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Find project directory
+        id: find_project
+        run: |
+          # پیدا کردن package.json به شکلی که در برابر نقطه و فاصله مقاوم باشد
+          find extracted_project -name "package.json" -not -path "*/node_modules/*" -print0 | head -z -n 1 | xargs -0 dirname > proj_path.txt
+          PROJ_DIR=$(cat proj_path.txt)
+          if [ -z "$PROJ_DIR" ]; then
+            echo "پوشه پروژه پیدا نشد."
+            exit 1
+          fi
+          echo "dir=$PROJ_DIR" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        working-directory: ${{ steps.find_project.outputs.dir }}
+        run: npm install
+        
+      - name: Build site
+        working-directory: ${{ steps.find_project.outputs.dir }}
+        run: npm run build:site
+        
+      - name: Find output directory
+        id: find_dir
+        working-directory: ${{ steps.find_project.outputs.dir }}
+        run: |
+          if [ -d "_site" ]; then echo "dir=_site" >> $GITHUB_OUTPUT
+          elif [ -d "dist" ]; then echo "dir=dist" >> $GITHUB_OUTPUT
+          elif [ -d "public" ]; then echo "dir=public" >> $GITHUB_OUTPUT
+          elif [ -d "_output" ]; then echo "dir=_output" >> $GITHUB_OUTPUT
+          else
+            echo "هیچ پوشه استانداردی پیدا نشد."
+            ls -la
+            exit 1
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ steps.find_project.outputs.dir }}/${{ steps.find_dir.outputs.dir }}
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
